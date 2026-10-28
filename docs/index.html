@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f5f1; --paper: #fff; --ink: #15171a; --soft: #545a63; --faint: #8a9099; --line: rgba(21, 23, 26, .09);
+    --bg: #f6f5f1; --paper: #fff; --ink: #15171a; --soft: #545a63; --faint: #666b74; --line: rgba(21, 23, 26, .09);
     --tremor: #c2410c; --intent: #0f766e; --ease: cubic-bezier(.32, .72, 0, 1);
     --display: "Bricolage Grotesque", system-ui, sans-serif; --sans: "Plus Jakarta Sans", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
     --shadow: 0 30px 60px -30px rgba(21, 23, 26, .2), 0 2px 6px -2px rgba(21, 23, 26, .06);
@@ -231,7 +231,7 @@
       </div>
       <div class="shell reveal"><div class="core">
         <div class="label"><span>Single-tone model</span><span><span class="key k-tremor dash">Tremor</span> &nbsp; <span class="key k-intent">Correction</span> &nbsp; <span class="key k-ink">What's left</span></span></div>
-        <div class="verdict" aria-live="polite"><strong id="db">+1.6 dB</strong><span id="verdict">Worse than nothing</span></div>
+        <div class="verdict" aria-live="polite"><strong id="db">−2.7 dB</strong><span id="verdict" class="bad">Barely helps</span></div>
         <canvas id="lag" aria-label="Tremor, the delayed correction and the residual"></canvas>
         <p class="fine">Idealised: one sine, correction delayed by the lag, residual = 2·|sin(π·f·lag)|. With prediction on it shows the full simulation's measured −17.5 dB. A reactive loop measured −5.6 dB there.</p>
       </div></div>
@@ -347,7 +347,7 @@
 <script>
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (s) => document.querySelector(s);
-const C = { tremor: '#c2410c', intent: '#0f766e', ink: '#15171a', grid: 'rgba(21,23,26,.07)', faint: '#8a9099' };
+const C = { tremor: '#c2410c', intent: '#0f766e', ink: '#15171a', grid: 'rgba(21,23,26,.07)', faint: '#666b74' };
 const fill = (i) => i.style.setProperty('--p', ((i.value - i.min) / (i.max - i.min) * 100) + '%');
 
 function surface(canvas, draw) {
