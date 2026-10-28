@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steady Utensil · tremor-cancelling control</title>
+<meta name="description" content="Control firmware for a 3D-printed self-stabilising spoon: cancel the tremor, keep the intent. −17.5 dB tremor attenuation in closed-loop simulation, with an interactive look at why prediction beats reaction.">
+<meta name="theme-color" content="#f6f5f1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2315171a'/%3E%3Cpath d='M5 16c3-6 5 6 8 0s5 6 8 0 4-2 6-2' stroke='%23e4572e' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f1; --paper: #fff; --ink: #15171a; --soft: #545a63; --faint: #8a9099; --line: rgba(21, 23, 26, .09);
+    --tremor: #c2410c; --intent: #0f766e; --ease: cubic-bezier(.32, .72, 0, 1);
+    --display: "Bricolage Grotesque", system-ui, sans-serif; --sans: "Plus Jakarta Sans", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+    --shadow: 0 30px 60px -30px rgba(21, 23, 26, .2), 0 2px 6px -2px rgba(21, 23, 26, .06);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.65 var(--sans); overflow-x: hidden; }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--intent); outline-offset: 3px; border-radius: 6px; }
+  .wrap { width: min(1180px, 100% - 32px); margin-inline: auto; }
+  section { padding: clamp(88px, 12vw, 150px) 0; }
+  h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -.035em; line-height: .98; font-weight: 800; }
+  h2 { font-size: clamp(2.3rem, 5vw, 4rem); margin: 18px 0 18px; }
+  .lede { color: var(--soft); max-width: 58ch; margin: 0; }
+  .mono { font-family: var(--mono); }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font: 500 11px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--soft);
+    padding: 7px 12px; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); }
+  .eyebrow i { width: 6px; height: 6px; border-radius: 50%; background: var(--tremor); }
+
+  .nav { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; gap: 2px; padding: 6px; border-radius: 99px;
+    background: rgba(255,255,255,.78); border: 1px solid var(--line); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 10px 30px -18px rgba(21,23,26,.3); }
+  .nav a { text-decoration: none; font: 600 13px/1 var(--sans); color: var(--soft); padding: 10px 14px; border-radius: 99px; transition: background .4s var(--ease), color .4s var(--ease); white-space: nowrap; }
+  .nav a:hover { color: var(--ink); background: rgba(21,23,26,.05); }
+  .nav a.code { background: var(--ink); color: #fff; }
+  @media (max-width: 640px) { .nav a:not(.code):not(.brand) { display: none; } }
+
+  .btn { display: inline-flex; align-items: center; gap: 14px; padding: 7px 7px 7px 22px; border-radius: 99px; text-decoration: none; font: 600 15px/1 var(--sans);
+    background: var(--ink); color: #fff; transition: transform .5s var(--ease), box-shadow .5s var(--ease); box-shadow: 0 14px 30px -16px rgba(21,23,26,.6); }
+  .btn .dot { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.14); transition: transform .5s var(--ease); }
+  .btn:hover .dot { transform: translate(2px, -2px) scale(1.06); }
+  .btn:active { transform: scale(.98); }
+  .btn.light { background: var(--paper); color: var(--ink); border: 1px solid var(--line); box-shadow: none; padding: 7px 22px; min-height: 50px; }
+
+  .shell { padding: 6px; border-radius: 30px; background: rgba(21,23,26,.035); border: 1px solid var(--line); }
+  .core { background: var(--paper); border-radius: 24px; box-shadow: var(--shadow), inset 0 1px 0 #fff; padding: clamp(18px, 3vw, 28px); height: 100%; }
+  .label { font: 500 11px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .key { display: inline-flex; align-items: center; gap: 6px; }
+  .key::before { content: ""; width: 16px; height: 0; border-top: 2px solid currentColor; }
+  .key.dash::before { border-top-style: dashed; }
+  .k-tremor { color: var(--tremor); } .k-intent { color: var(--intent); } .k-ink { color: var(--ink); }
+  canvas { display: block; width: 100%; }
+
+  /* hero */
+  .hero { min-height: 100dvh; display: grid; grid-template-columns: 1fr 1.05fr; gap: clamp(28px, 5vw, 64px); align-items: center; padding-top: 110px; }
+  .hero h1 { font-size: clamp(3.4rem, 8vw, 6.6rem); margin: 24px 0 22px; }
+  .hero h1 span { color: var(--intent); display: block; }
+  .hero p { color: var(--soft); max-width: 40ch; margin: 0 0 30px; font-size: 1.1rem; }
+  .ctas { display: flex; gap: 10px; flex-wrap: wrap; }
+  .metrics { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 40px; }
+  .metric { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 14px 18px; }
+  .metric small { display: block; font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+  .metric strong { font: 600 26px/1.4 var(--display); letter-spacing: -.02em; }
+  #scope { height: 300px; margin-top: 14px; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } #scope { height: 220px; } }
+
+  /* bands */
+  .center { text-align: center; } .center .lede { margin-inline: auto; }
+  .bands { margin-top: 52px; }
+  #bands { height: 230px; }
+  .band-note { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 15px; color: var(--soft); }
+
+  /* lag */
+  .split { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(28px, 5vw, 64px); align-items: center; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  .controls { margin-top: 30px; display: grid; gap: 6px; }
+  .slider { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--soft); }
+  .slider output { color: var(--ink); }
+  input[type=range] { grid-column: 1 / -1; width: 100%; appearance: none; -webkit-appearance: none; height: 30px; background: transparent; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(90deg, var(--ink) var(--p, 50%), rgba(21,23,26,.1) var(--p, 50%)); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 4px; background: linear-gradient(90deg, var(--ink) var(--p, 50%), rgba(21,23,26,.1) var(--p, 50%)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff; border: 2px solid var(--ink); box-shadow: 0 4px 10px -4px rgba(0,0,0,.4); }
+  input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 2px solid var(--ink); }
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 14px 16px; border-radius: 16px; background: var(--paper); border: 1px solid var(--line);
+    font: 500 12px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--soft); cursor: pointer; }
+  .toggle input { appearance: none; -webkit-appearance: none; width: 48px; height: 28px; border-radius: 99px; background: rgba(21,23,26,.15); position: relative; cursor: pointer; transition: background .4s var(--ease); flex: none; margin: 0; }
+  .toggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.2); transition: transform .4s var(--ease); }
+  .toggle input:checked { background: var(--intent); }
+  .toggle input:checked::after { transform: translateX(20px); }
+  .verdict { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 14px 0 6px; }
+  .verdict strong { font: 800 clamp(2.4rem, 5vw, 3.4rem)/1 var(--display); letter-spacing: -.03em; }
+  .verdict span { font: 500 12px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 8px 12px; border-radius: 99px; background: rgba(15,118,110,.1); color: var(--intent); }
+  .verdict span.bad { background: rgba(194,65,12,.1); color: var(--tremor); }
+  #lag { height: 210px; }
+  .fine { font-size: 13px; color: var(--faint); margin: 12px 0 0; }
+
+  /* results */
+  .dark { background: #15171a; color: #f3f2ee; }
+  .dark .lede, .dark .label { color: #a3a8b0; }
+  .dark .eyebrow { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); color: #c9ccd1; }
+  .results { margin-top: 48px; display: grid; gap: 10px; }
+  .row { display: grid; grid-template-columns: 220px 1fr 130px; gap: 24px; align-items: center; padding: 22px 24px; border-radius: 22px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); }
+  .row h3 { font-size: 22px; letter-spacing: -.02em; }
+  .row small { display: block; font: 500 10px/1.5 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: #8b9098; }
+  .meter { height: 10px; border-radius: 10px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: var(--w); border-radius: 10px; background: #5eead4; transform-origin: left; transition: transform 1.3s var(--ease); }
+  .row.worse .meter i { background: #8b9098; }
+  .js .results:not(.in) .meter i { transform: scaleX(0); }
+  .row .num { font: 700 20px/1.2 var(--mono); }
+  .row .vol { text-align: right; font: 700 20px/1.2 var(--mono); }
+  .row .vol.bad { color: #fb923c; }
+  @media (max-width: 760px) { .row { grid-template-columns: 1fr; gap: 12px; } .row .vol { text-align: left; } }
+
+  /* sweep */
+  .sweep { display: flex; align-items: flex-end; gap: 8px; height: 260px; padding: 12px 4px 0; }
+  .sweep button { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px; border: 0; background: none; cursor: pointer; padding: 0; font: 500 11px/1 var(--mono); color: var(--faint); }
+  .sweep button i { width: 100%; height: var(--h); border-radius: 10px 10px 4px 4px; background: rgba(21,23,26,.08); transition: background .4s var(--ease), transform .4s var(--ease); transform-origin: bottom; }
+  .sweep button:hover i, .sweep button[aria-pressed=true] i { background: var(--ink); }
+  .sweep button.best i { background: var(--intent); }
+  .sweep-read { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sweep-read strong { font: 800 2.6rem/1 var(--display); letter-spacing: -.03em; }
+
+  /* findings */
+  .findings { margin-top: 48px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; }
+  .findings details { grid-column: span 2; background: var(--paper); border: 1px solid var(--line); border-radius: 24px; padding: 24px; box-shadow: var(--shadow); transition: transform .5s var(--ease); }
+  .findings details:nth-child(4), .findings details:nth-child(5) { grid-column: span 3; }
+  .findings details:hover { transform: translateY(-3px); }
+  .findings summary { list-style: none; cursor: pointer; display: grid; gap: 10px; }
+  .findings summary::-webkit-details-marker { display: none; }
+  .findings summary small { font: 500 11px/1 var(--mono); letter-spacing: .14em; color: var(--tremor); }
+  .findings summary b { font: 700 20px/1.25 var(--display); letter-spacing: -.02em; }
+  .findings summary em { font-style: normal; font: 500 12px/1 var(--mono); color: var(--faint); }
+  .findings details[open] summary em { display: none; }
+  .findings p { color: var(--soft); font-size: 15px; margin: 14px 0 0; }
+  .findings .stat { font: 700 13px/1.5 var(--mono); color: var(--intent); margin-top: 12px; }
+  @media (max-width: 900px) { .findings { grid-template-columns: 1fr; } .findings details, .findings details:nth-child(n) { grid-column: auto; } }
+
+  /* pipeline */
+  .pipe { list-style: none; margin: 48px 0 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; counter-reset: step; }
+  .pipe li { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: 18px 16px; position: relative; counter-increment: step; }
+  .pipe li::before { content: "0" counter(step); font: 500 11px/1 var(--mono); color: var(--faint); }
+  .pipe b { display: block; font: 700 17px/1.25 var(--display); margin: 10px 0 6px; letter-spacing: -.01em; }
+  .pipe span { font-size: 13px; color: var(--soft); line-height: 1.5; display: block; }
+  .pipe li.hot { background: var(--ink); color: #fff; } .pipe li.hot span, .pipe li.hot::before { color: #b9bec6; }
+  @media (max-width: 1000px) { .pipe { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { .pipe { grid-template-columns: 1fr; } }
+
+  /* safety */
+  .safety { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 40px; }
+  .safety div { padding: 22px; border-radius: 22px; background: var(--paper); border: 1px solid var(--line); }
+  .safety b { display: block; font: 700 18px/1.3 var(--display); margin-bottom: 6px; }
+  .safety span { font-size: 15px; color: var(--soft); }
+  .honest { margin-top: 64px; padding: 28px; border-radius: 26px; border: 1px dashed rgba(21,23,26,.25); display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: start; }
+  .honest svg { color: var(--tremor); }
+  .honest p { margin: 0; color: var(--soft); }
+  .honest b { color: var(--ink); }
+
+  .end { text-align: center; }
+  .end .ctas { justify-content: center; margin-top: 30px; }
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font: 500 12px/1.6 var(--mono); color: var(--faint); }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  .js .reveal { opacity: 0; transform: translateY(24px); transition: opacity .9s var(--ease), transform .9s var(--ease); }
+  .js .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .js .reveal { opacity: 1; transform: none; transition: none; }
+    .js .results:not(.in) .meter i { transform: none; }
+  }
+</style>
+</head>
+<body>
+<script>document.documentElement.classList.add('js')</script>
+<nav class="nav" aria-label="Sections">
+  <a class="brand" href="#top">Steady Utensil</a><a href="#lag-sec">Latency</a><a href="#results">Results</a><a href="#findings">Findings</a><a href="#safety">Safety</a>
+  <a class="code" href="https://github.com/zachthedude/steady-utensil">Code</a>
+</nav>
+
+<main id="top">
+  <header class="wrap hero">
+    <div>
+      <span class="eyebrow reveal"><i></i>Assistive hardware · control firmware</span>
+      <h1 class="reveal">Cancel the shake. <span>Keep the intent.</span></h1>
+      <p class="reveal">Control firmware for a 3D-printed self-stabilising spoon for people with hand tremor. It cancels the 4–12 Hz shake and follows the hand to the mouth.</p>
+      <div class="ctas reveal">
+        <a class="btn" href="https://github.com/zachthedude/steady-utensil">Read the code <span class="dot" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M8 7h9v9"/></svg></span></a>
+        <a class="btn light" href="#lag-sec">Why prediction?</a>
+      </div>
+      <div class="metrics reveal">
+        <div class="metric"><small>Tremor attenuation</small><strong>−17.5 dB</strong></div>
+        <div class="metric"><small>Reduction</small><strong>86.7%</strong></div>
+        <div class="metric"><small>Voluntary error</small><strong>0.20°</strong></div>
+      </div>
+    </div>
+    <div class="shell reveal"><div class="core">
+      <div class="label"><span>Handle vs spoon · live</span><span><span class="key k-tremor dash">Handle</span> &nbsp; <span class="key k-intent">Spoon</span></span></div>
+      <canvas id="scope" aria-label="Animated trace: the handle shakes, the spoon follows the reach without the shake"></canvas>
+    </div></div>
+  </header>
+
+  <section>
+    <div class="wrap">
+      <div class="center reveal">
+        <span class="eyebrow"><i></i>The design correction</span>
+        <h2>“Level” is the wrong target.</h2>
+        <p class="lede">A spoon that holds itself level in the world fights you every time you lift it. In simulation that costs <b>15° of error</b> on the movement you meant to make. Tremor and intent live in different frequency bands, so the controller separates them and cancels only the tremor.</p>
+      </div>
+      <div class="shell bands reveal"><div class="core">
+        <div class="label"><span>Frequency</span><span><span class="key k-intent">Voluntary reaching &lt; 2 Hz</span> &nbsp; <span class="key k-tremor dash">Tremor 4–12 Hz</span></span></div>
+        <canvas id="bands" aria-label="Two humps on a frequency axis: voluntary motion below 2 Hz, tremor between 4 and 12 Hz"></canvas>
+        <div class="band-note"><span>Intent = low-pass at 1.2 Hz, used as the setpoint</span><span>Tremor = (tilt − intent), conditioned 0.8–40 Hz</span></div>
+      </div></div>
+    </div>
+  </section>
+
+  <section id="lag-sec">
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow"><i></i>The latency trap</span>
+        <h2>Reacting is too late.</h2>
+        <p class="lede">Filtering, the control period and the motor all add delay. Oppose a shake you measured a moment ago and, past a certain lag, you add to it instead. Tremor is narrowband, so an adaptive oscillator (WFLC) locks onto it and predicts it <em>ahead</em> of time.</p>
+        <div class="controls">
+          <label class="slider">Tremor frequency <output id="fOut">6 Hz</output><input id="f" type="range" min="4" max="12" step="0.5" value="6"></label>
+          <label class="slider">Pipeline lag <output id="tauOut">20 ms</output><input id="tau" type="range" min="0" max="60" step="1" value="20"></label>
+          <label class="toggle">Predict ahead (WFLC) <input id="predict" type="checkbox"></label>
+        </div>
+      </div>
+      <div class="shell reveal"><div class="core">
+        <div class="label"><span>Single-tone model</span><span><span class="key k-tremor dash">Tremor</span> &nbsp; <span class="key k-intent">Correction</span> &nbsp; <span class="key k-ink">What's left</span></span></div>
+        <div class="verdict" aria-live="polite"><strong id="db">+1.6 dB</strong><span id="verdict">Worse than nothing</span></div>
+        <canvas id="lag" aria-label="Tremor, the delayed correction and the residual"></canvas>
+        <p class="fine">Idealised: one sine, correction delayed by the lag, residual = 2·|sin(π·f·lag)|. With prediction on it shows the full simulation's measured −17.5 dB. A reactive loop measured −5.6 dB there.</p>
+      </div></div>
+    </div>
+  </section>
+
+  <section class="dark" id="results">
+    <div class="wrap">
+      <div class="reveal">
+        <span class="eyebrow"><i></i>Measured in closed-loop simulation</span>
+        <h2>Three controllers, one tremor.</h2>
+        <p class="lede">30 s run, tremor chirping 5 → 9 Hz with a 25% second harmonic, on top of a 0.25 Hz reach. The plant models delay, friction, cogging, sensor noise and the tremor's own acceleration. Input tremor 2.63° rms.</p>
+      </div>
+      <div class="results" id="resultsBars">
+        <div class="row"><div><small>Full design</small><h3>WFLC predict + PID</h3></div><div><small>Attenuation · −17.5 dB · 86.7% reduction</small><div class="meter"><i style="--w:86.7%"></i></div></div><div class="vol"><small>Voluntary error</small>0.20°</div></div>
+        <div class="row worse"><div><small>No prediction</small><h3>Reactive PID</h3></div><div><small>Attenuation · −5.6 dB · 47.8% reduction</small><div class="meter"><i style="--w:47.8%"></i></div></div><div class="vol"><small>Voluntary error</small>0.46°</div></div>
+        <div class="row worse"><div><small>The obvious spec</small><h3>Hold level</h3></div><div><small>Attenuation · −6.2 dB · 51.3% reduction</small><div class="meter"><i style="--w:51.3%"></i></div></div><div class="vol bad"><small>Voluntary error</small>15.0° · fights you</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow"><i></i>Tuning on hardware</span>
+        <h2>One number worth 10 dB.</h2>
+        <p class="lede">How far ahead to predict is swept last, on the real device. It's the net phase alignment, pipeline lag minus front-end phase lead, so it can be negative. The curve has one clear minimum. Pick a bar.</p>
+      </div>
+      <div class="shell reveal"><div class="core">
+        <div class="sweep-read"><span class="label">Predict-ahead</span><strong id="sweepDb">−17.5 dB</strong></div>
+        <div class="label"><span id="sweepMs">−3 ms · 86.7% reduction</span></div>
+        <div class="sweep" id="sweep" role="group" aria-label="Attenuation for each predict-ahead setting"></div>
+      </div></div>
+    </div>
+  </section>
+
+  <section id="findings">
+    <div class="wrap">
+      <div class="reveal">
+        <span class="eyebrow"><i></i>Found by sweep</span>
+        <h2>Five choices that looked harmless.</h2>
+        <p class="lede">Each one costs real performance until you measure it. Tap a card for the detail.</p>
+      </div>
+      <div class="findings reveal">
+        <details><summary><small>01</small><b>The low-pass is set by the harmonic, not the tremor.</b><em>+ open</em></summary>
+          <p>A 20 Hz filter looks generous for a 14 Hz signal, but a 9 Hz tremor's second harmonic sits at 18 Hz, where it loses 22% gain and 81° of phase. Rule: band_hi ≥ 3 × f_max.</p><p class="stat">Open-loop residual −13 dB → −21 dB</p></details>
+        <details><summary><small>02</small><b>Only the fundamental may steer the frequency.</b><em>+ open</em></summary>
+          <p>The WFLC gradient weights harmonic r by r, so a 25% second harmonic gets half the fundamental's vote and breaks the lock. Harmonics are still reconstructed, they just don't vote.</p><p class="stat">Frequency error 0.018 Hz vs 3.7 Hz</p></details>
+        <details><summary><small>03</small><b>The accelerometer is useless in the tremor band.</b><em>+ open</em></summary>
+          <p>A 6 Hz tremor makes about 7 m/s² of linear acceleration, close to gravity. The tilt observer crosses over at 0.3 Hz and gates samples that don't look like gravity.</p><p class="stat">31% of samples rejected during tremor, correctly</p></details>
+        <details><summary><small>04</small><b>The D-term setpoint weight must be 1, not 0.</b><em>+ open</em></summary>
+          <p>Textbook derivative-on-measurement avoids kick, but here the setpoint itself moves at tremor frequency and its derivative is known exactly. With c = 0 the D term fights every commanded motion.</p><p class="stat">c = 0 demands ~2.0 of command against a 1.0 limit</p></details>
+        <details><summary><small>05</small><b>A free gimbal already isolates on its own.</b><em>+ open</em></summary>
+          <p>A head that stays still in space needs no net torque, so on a direct-drive gimbal the acceleration feedforward should be zero. That makes low bearing friction the most important mechanical requirement.</p><p class="stat">accel_ff_gain = 0 direct drive, J/Kt geared</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="reveal">
+        <span class="eyebrow"><i></i>Architecture</span>
+        <h2>From IMU to motor.</h2>
+      </div>
+      <ol class="pipe reveal">
+        <li><b>IMU</b><span>1 kHz gyro and accelerometer on the handle</span></li>
+        <li><b>Tilt observer</b><span>Complementary PI, 0.3 Hz, gated</span></li>
+        <li><b>Split</b><span>Intent below 1.2 Hz, tremor 0.8–40 Hz</span></li>
+        <li class="hot"><b>WFLC</b><span>Locks frequency, amplitude and phase</span></li>
+        <li class="hot"><b>Predict</b><span>Setpoint and rate, ahead of the lag</span></li>
+        <li><b>Limits</b><span>Travel, then slew at 12 rad/s</span></li>
+        <li><b>PID → motor</b><span>Anti-windup, D from measured rate</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="safety">
+    <div class="wrap">
+      <div class="reveal">
+        <span class="eyebrow"><i></i>About 100 mm from a face</span>
+        <h2>It must never fail into motion.</h2>
+        <p class="lede">The control law is bounded whether or not it is working. Every failure degrades to an ordinary spoon.</p>
+      </div>
+      <div class="safety reveal">
+        <div><b>Slew limit</b><span>12 rad/s, about 3.5× what a real tremor needs, so no fault can become a fast swing.</span></div>
+        <div><b>Travel limit</b><span>Enforced before the slew limit and backed by mechanical stops.</span></div>
+        <div><b>Latched fault</b><span>IMU timeout, bad attitude or a power fault parks the joints until explicitly cleared.</span></div>
+        <div><b>Fail to coasting</b><span>A braked joint passes every tremor to the food. A coasting one still isolates.</span></div>
+        <div><b>Watchdog</b><span>Fed only from the control task, never from the interrupt.</span></div>
+        <div><b>Food-safe head</b><span>Stainless steel, removable, dishwasher-safe. Printed parts never touch food.</span></div>
+      </div>
+      <div class="honest reveal">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 10v5M12 18v.01"/></svg>
+        <p><b>Honest status.</b> The numbers come from <span class="mono">validate/validate.py</span>, a line-for-line Python port of the C++ headers run against a plant model. The C++ itself hasn't been compiled yet, and the synthetic tremor is periodic, which flatters the method. This is evidence the control law is sound, not a medical device.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="end">
+    <div class="wrap reveal">
+      <h2>The whole controller is open.</h2>
+      <p class="lede" style="margin-inline:auto">Headers for the PID, filters, WFLC and safety state machine, a desktop simulation, and the Python probes that produced every number here.</p>
+      <div class="ctas">
+        <a class="btn" href="https://github.com/zachthedude/steady-utensil">View on GitHub <span class="dot" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M8 7h9v9"/></svg></span></a>
+        <a class="btn light" href="https://zachthedude.github.io/Personal-Website/#work">More projects</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer><div class="wrap"><span>Steady Utensil · built by Zachary Samuel</span><span>C++ firmware · Python validation</span></div></footer>
+
+<script>
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = (s) => document.querySelector(s);
+const C = { tremor: '#c2410c', intent: '#0f766e', ink: '#15171a', grid: 'rgba(21,23,26,.07)', faint: '#8a9099' };
+const fill = (i) => i.style.setProperty('--p', ((i.value - i.min) / (i.max - i.min) * 100) + '%');
+
+function surface(canvas, draw) {
+  const g = canvas.getContext('2d');
+  let w = 0, h = 0;
+  const fit = () => {
+    const r = canvas.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+    w = r.width; h = r.height; canvas.width = w * dpr; canvas.height = h * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw(g, w, h);
+  };
+  new ResizeObserver(fit).observe(canvas);
+  return () => draw(g, w, h);
+}
+function line(g, n, f, color, dash = [], width = 2) {
+  g.strokeStyle = color; g.lineWidth = width; g.setLineDash(dash); g.beginPath();
+  for (let i = 0; i <= n; i++) { const [x, y] = f(i / n); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+  g.stroke(); g.setLineDash([]);
+}
+
+// ---- Hero scope: 0.25 Hz reach + 6 Hz tremor (+25% 2nd harmonic); spoon keeps the reach, tremor × 0.133 (−17.5 dB)
+let t0 = performance.now();
+const scope = surface($('#scope'), (g, w, h) => {
+  const now = still ? 4000 : performance.now() - t0, span = 4, start = now / 1000;
+  g.clearRect(0, 0, w, h);
+  g.strokeStyle = C.grid; g.lineWidth = 1;
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(0, h * i / 4); g.lineTo(w, h * i / 4); g.stroke(); }
+  const reach = (t) => Math.sin(2 * Math.PI * .25 * t) * .55;
+  const trem = (t) => .22 * (Math.sin(2 * Math.PI * 6 * t) + .25 * Math.sin(2 * Math.PI * 12 * t + 1)) * (1 + .3 * Math.sin(2 * Math.PI * .4 * t));
+  const Y = (v) => h / 2 - v * h * .42;
+  line(g, 600, (u) => [u * w, Y(reach(start + u * span) + trem(start + u * span))], C.tremor, [5, 4], 1.6);
+  line(g, 600, (u) => [u * w, Y(reach(start + u * span) + trem(start + u * span) * .133)], C.intent, [], 2.6);
+});
+(function loop() { scope(); if (!still) requestAnimationFrame(loop); })();
+
+// ---- Bands
+surface($('#bands'), (g, w, h) => {
+  g.clearRect(0, 0, w, h);
+  const pad = 26, max = 16, X = (f) => pad + (w - pad * 2) * f / max, base = h - pad;
+  g.fillStyle = C.faint; g.font = '500 11px "JetBrains Mono", monospace';
+  for (let f = 0; f <= max; f += 2) { g.fillText(f + (f === max ? ' Hz' : ''), X(f) - 4, h - 6); g.fillStyle = C.grid; g.fillRect(X(f), pad, 1, base - pad); g.fillStyle = C.faint; }
+  const hump = (c, s, a) => (f) => a * Math.exp(-((f - c) ** 2) / (2 * s * s));
+  const vol = hump(.6, .7, 1), trem = (f) => hump(7, 2.2, .55)(f) + hump(14, 1.2, .12)(f);
+  [[vol, C.intent, []], [trem, C.tremor, [5, 4]]].forEach(([fn, col, dash]) => {
+    g.fillStyle = col + '1f'; g.beginPath(); g.moveTo(X(0), base);
+    for (let i = 0; i <= 300; i++) { const f = max * i / 300; g.lineTo(X(f), base - fn(f) * (base - pad)); }
+    g.lineTo(X(max), base); g.fill();
+    line(g, 300, (u) => [X(max * u), base - fn(max * u) * (base - pad)], col, dash, 2);
+  });
+  g.fillStyle = C.ink; g.fillRect(X(2), pad, 1.5, base - pad); g.fillRect(X(4), pad, 1.5, base - pad);
+});
+
+// ---- Latency explainer: correction = −tremor delayed by tau; residual amplitude 2|sin(π f τ)|
+const fIn = $('#f'), tauIn = $('#tau'), pred = $('#predict');
+const MEASURED = Math.pow(10, -17.5 / 20); // 0.133
+const lag = surface($('#lag'), (g, w, h) => {
+  const f = +fIn.value, tau = +tauIn.value / 1000, on = pred.checked;
+  const shift = on ? 0 : tau;
+  const res = on ? MEASURED : 2 * Math.abs(Math.sin(Math.PI * f * shift));
+  const db = 20 * Math.log10(Math.max(res, 1e-3));
+  $('#db').textContent = `${db > 0 ? '+' : '−'}${Math.abs(db).toFixed(1)} dB`;
+  const v = $('#verdict');
+  v.textContent = db > 0 ? 'Worse than nothing' : db > -6 ? 'Barely helps' : db > -12 ? 'Helps' : 'Cancelled';
+  v.className = db > -6 ? 'bad' : '';
+  g.clearRect(0, 0, w, h);
+  const Y = (y) => h / 2 - y * h * .22, cycles = 3, T = cycles / f;
+  g.strokeStyle = C.grid; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+  const trem = (t) => Math.sin(2 * Math.PI * f * t);
+  line(g, 400, (u) => [u * w, Y(trem(u * T))], C.tremor, [5, 4], 1.6);
+  line(g, 400, (u) => [u * w, Y(-trem(u * T - shift))], C.intent, [], 1.6);
+  // sin(x) − sin(x − φ) = 2·sin(φ/2)·cos(x − φ/2), φ = 2πfτ. With prediction: the measured residual, drawn in phase.
+  const resid = on
+    ? (t) => MEASURED * trem(t)
+    : (t) => 2 * Math.sin(Math.PI * f * shift) * Math.cos(2 * Math.PI * f * t - Math.PI * f * shift);
+  line(g, 400, (u) => [u * w, Y(resid(u * T))], C.ink, [], 2.8);
+});
+function updateLag() { $('#fOut').textContent = `${fIn.value} Hz`; $('#tauOut').textContent = `${tauIn.value} ms`; fill(fIn); fill(tauIn); tauIn.disabled = pred.checked; lag(); }
+[fIn, tauIn, pred].forEach((el) => el.addEventListener('input', updateLag)); updateLag();
+
+// ---- Predict-ahead sweep (validate.py probe 4, plus the −3 ms reference point)
+const SWEEP = [[-10, -8.1, 60.7], [-8, -10.6, 70.6], [-6, -13.9, 79.8], [-4, -17.1, 86.1], [-3, -17.5, 86.7], [-2, -16.5, 85.1], [0, -13.1, 77.8], [2, -10.0, 68.3], [4, -7.6, 58.1], [6, -5.6, 47.7], [8, -4.0, 37.2]];
+const sweep = $('#sweep');
+SWEEP.forEach(([ms, db, pct]) => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = ms === -3 ? 'best' : '';
+  b.setAttribute('aria-pressed', ms === -3); b.setAttribute('aria-label', `${ms} milliseconds: ${db} dB`);
+  b.innerHTML = `<i style="--h:${(-db / 18 * 88).toFixed(1)}%"></i>${ms}`;
+  const pick = () => {
+    sweep.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b));
+    $('#sweepDb').textContent = `−${Math.abs(db).toFixed(1)} dB`;
+    $('#sweepMs').textContent = `${ms > 0 ? '+' : ms < 0 ? '−' : ''}${Math.abs(ms)} ms · ${pct}% reduction${ms === -3 ? ' · best' : ''}`;
+  };
+  b.addEventListener('click', pick); b.addEventListener('mouseenter', pick); b.addEventListener('focus', pick);
+  sweep.append(b);
+});
+
+// ---- Reveals
+const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .15, rootMargin: '0px 0px -40px' });
+document.querySelectorAll('.reveal, .results').forEach((el) => io.observe(el));
+</script>
+</body>
+</html>
